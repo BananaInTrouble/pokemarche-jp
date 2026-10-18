@@ -1,9 +1,11 @@
 import Ionicons from '@expo/vector-icons/Ionicons';
 import { Image } from 'expo-image';
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { ActivityIndicator, Animated, Easing, Modal, Pressable, ScrollView, Text, View, useWindowDimensions } from 'react-native';
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
+import { ActivityIndicator, Modal, Pressable, ScrollView, Text, View, useWindowDimensions } from 'react-native';
 import { colors, fonts, s } from '../components/ui';
-import { PR_RARITIES, RARITY_STYLE, cardImage, packImage, type PrRarity } from '../lib/packrush/art';
+import { PR_RARITIES, RARITY_STYLE, cardImage, type PrRarity } from '../lib/packrush/art';
+import { setEmblem } from '../lib/packrush/brand';
+import { FragmentIcon, Opening, Pack, PackRushLogo } from '../components/PackRush';
 import { PackRushError, claimQuests, craftCard, loadCatalog, loadStatus, openPack, perCardChance, type PrCard, type PrOpening, type PrSet, type PrStatus } from '../lib/packrush/api';
 import { useStore } from '../lib/store';
 import type { TKey } from '../lib/i18n';
@@ -116,19 +118,25 @@ export default function PackRush() {
     <View style={s.screen}>
       <ScrollView contentContainerStyle={{ padding: 16, paddingBottom: 48, gap: 14, maxWidth: 700, width: '100%', alignSelf: 'center' }}>
         {/* Bloc, set et soldes. */}
-        <View style={{ backgroundColor: colors.card, borderRadius: 16, borderWidth: 1, borderColor: colors.line, padding: 14, gap: 10 }}>
-          <Text style={{ color: colors.muted, fontFamily: fonts.bold, fontSize: 12, letterSpacing: 0.6, textTransform: 'uppercase' }}>{local(set.block, appLang)}</Text>
-          <Text style={s.h2}>{local(set.name, appLang)}</Text>
+        <View style={{ backgroundColor: colors.card, borderRadius: 16, borderWidth: 1, borderColor: colors.line, padding: 14, gap: 12 }}>
+          <View style={{ alignItems: 'center' }}><PackRushLogo size={20} /></View>
+          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 12 }}>
+            <Image source={setEmblem(set.id)} style={{ width: 56, height: 56 }} />
+            <View style={{ flex: 1 }}>
+              <Text style={{ color: colors.muted, fontFamily: fonts.bold, fontSize: 12, letterSpacing: 0.6, textTransform: 'uppercase' }}>{local(set.block, appLang)}</Text>
+              <Text style={s.h2}>{local(set.name, appLang)}</Text>
+            </View>
+          </View>
           <View style={{ flexDirection: 'row', gap: 10 }}>
-            <Balance icon="🪙" value={status.coins} label={t('pr.coins')} />
-            <Balance icon="✦" color="#9FD8FF" value={status.fragments} label={t('pr.fragments')} />
-            <Balance icon="🃏" value={totalOwned} label={`/ ${cards.length}`} />
+            <Balance icon={<Text style={{ fontSize: 18 }}>🪙</Text>} value={status.coins} label={t('pr.coins')} />
+            <Balance icon={<FragmentIcon size={22} />} value={status.fragments} label={t('pr.fragments')} />
+            <Balance icon={<Text style={{ fontSize: 18 }}>🃏</Text>} value={totalOwned} label={`/ ${cards.length}`} />
           </View>
         </View>
 
         {/* Ouverture. */}
         <View style={{ alignItems: 'center', gap: 10 }}>
-          <Image source={packImage(local(set.name, appLang), local(set.block, appLang))} style={{ width: 150, height: 232 }} contentFit="contain" />
+          <Pack setId={set.id} title={local(set.name, appLang)} width={150} />
           <Text style={{ color: colors.text, fontFamily: fonts.heavy, fontSize: 16 }}>
             {status.free > 0 ? t('pr.freeLeft', { n: status.free }) : t('pr.noFree')}
           </Text>
@@ -236,15 +244,15 @@ export default function PackRush() {
       </Modal>
 
       {/* Ouverture d'un pack. */}
-      {opening && <Opening result={opening} byId={byId} total={cards.length} title={local(set.name, appLang)} onClose={() => setOpening(null)} />}
+      {opening && <Opening result={opening} byId={byId} total={cards.length} setId={set.id} title={local(set.name, appLang)} onClose={() => setOpening(null)} />}
     </View>
   );
 }
 
-function Balance({ icon, color, value, label }: { icon: string; color?: string; value: number; label: string }) {
+function Balance({ icon, value, label }: { icon: ReactNode; value: number; label: string }) {
   return (
     <View style={{ flex: 1, backgroundColor: colors.bg, borderRadius: 12, padding: 10, alignItems: 'center', gap: 2 }}>
-      <Text style={{ fontSize: 18, color: color ?? colors.text }}>{icon}</Text>
+      <View style={{ height: 24, justifyContent: 'center' }}>{icon}</View>
       <Text style={{ color: colors.text, fontFamily: fonts.heavy, fontSize: 18 }}>{value}</Text>
       <Text style={{ color: colors.muted, fontFamily: fonts.bold, fontSize: 11 }}>{label}</Text>
     </View>
@@ -280,91 +288,4 @@ function Odds({ set, cards }: { set: PrSet; cards: PrCard[] }) {
       </Text>
     </View>
   );
-}
-
-/** Ouverture animée : le pack, puis les 5 cartes révélées une à une (ou toutes d'un coup), puis le bonus. */
-function Opening({ result, byId, total, title, onClose }: { result: PrOpening; byId: Map<string, PrCard>; total: number; title: string; onClose(): void }) {
-  const { t, appLang } = useStore();
-  const [stage, setStage] = useState<'pack' | 'cards'>('pack');
-  const [shown, setShown] = useState(0);
-  const shake = useRef(new Animated.Value(0)).current;
-  const pop = useRef(new Animated.Value(0)).current;
-  useEffect(() => {
-    Animated.loop(Animated.sequence([
-      Animated.timing(shake, { toValue: 1, duration: 120, easing: Easing.linear, useNativeDriver: true }),
-      Animated.timing(shake, { toValue: -1, duration: 120, easing: Easing.linear, useNativeDriver: true }),
-      Animated.timing(shake, { toValue: 0, duration: 120, easing: Easing.linear, useNativeDriver: true }),
-      Animated.delay(500),
-    ])).start();
-  }, []);
-  const reveal = (n: number) => {
-    setShown(n);
-    pop.setValue(0);
-    Animated.spring(pop, { toValue: 1, useNativeDriver: true, friction: 6 }).start();
-  };
-  const all = shown >= result.cards.length;
-  const last = result.cards[shown - 1];
-  const lastCard = last && byId.get(last.id);
-  void appLang;
-
-  return (
-    <Modal visible transparent animationType="fade" onRequestClose={onClose}>
-      <View style={{ flex: 1, backgroundColor: 'rgba(5,12,9,0.94)', alignItems: 'center', justifyContent: 'center', padding: 20, gap: 14 }}>
-        {stage === 'pack' ? (
-          <Pressable onPress={() => { setStage('cards'); reveal(1); }} style={{ alignItems: 'center', gap: 16 }}>
-            <Animated.View style={{ transform: [{ rotate: shake.interpolate({ inputRange: [-1, 1], outputRange: ['-4deg', '4deg'] }) }] }}>
-              <Image source={packImage(title, '')} style={{ width: 200, height: 310 }} contentFit="contain" />
-            </Animated.View>
-            <Text style={{ color: colors.accent, fontFamily: fonts.heavy, fontSize: 18 }}>{t('pr.tapToOpen')}</Text>
-          </Pressable>
-        ) : !all ? (
-          <Pressable onPress={() => reveal(shown + 1)} style={{ alignItems: 'center', gap: 12 }}>
-            {lastCard && (
-              <Animated.View style={{ transform: [{ scale: pop.interpolate({ inputRange: [0, 1], outputRange: [0.6, 1] }) }], opacity: pop }}>
-                <Image source={cardImage(lastCard, total)} style={{ width: 230, height: 322 }} contentFit="contain" />
-              </Animated.View>
-            )}
-            <PullTag pull={last} />
-            <Text style={s.muted}>{t('pr.cardOf', { i: shown, n: result.cards.length })} · {t('pr.tapNext')}</Text>
-          </Pressable>
-        ) : (
-          <ScrollView contentContainerStyle={{ alignItems: 'center', gap: 12 }}>
-            <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8, justifyContent: 'center', maxWidth: 520 }}>
-              {result.cards.map((p, i) => {
-                const c = byId.get(p.id);
-                return c ? (
-                  <View key={i} style={{ alignItems: 'center', gap: 4 }}>
-                    <Image source={cardImage(c, total)} style={{ width: 96, height: 134 }} contentFit="contain" />
-                    <PullTag pull={p} small />
-                  </View>
-                ) : null;
-              })}
-            </View>
-            {result.bonus > 0 && (
-              <View style={{ backgroundColor: colors.accent, borderRadius: 14, paddingHorizontal: 16, paddingVertical: 10 }}>
-                <Text style={{ color: colors.bg, fontFamily: fonts.heavy, fontSize: 16 }}>🪙 {t('pr.bonus', { n: result.bonus })}</Text>
-              </View>
-            )}
-            {result.fragments > 0 && <Text style={{ color: '#9FD8FF', fontFamily: fonts.bold }}>✦ {t('pr.fragGained', { n: result.fragments })}</Text>}
-            {result.completions.map((x) => (
-              <Text key={x.rarity} style={{ color: colors.good, fontFamily: fonts.heavy }}>🏆 {t('pr.complete', { r: t(`pr.r.${x.rarity}` as TKey), n: x.coins })}</Text>
-            ))}
-          </ScrollView>
-        )}
-        <View style={{ flexDirection: 'row', gap: 10 }}>
-          {!all && <Pressable onPress={() => { setStage('cards'); reveal(result.cards.length); }} style={[s.ghost, { paddingHorizontal: 18 }]}><Text style={s.ghostText}>{t('pr.skip')}</Text></Pressable>}
-          {all && <Pressable onPress={onClose} style={[s.button, { paddingHorizontal: 28 }]}><Text style={s.buttonText}>{t('pr.continue')}</Text></Pressable>}
-        </View>
-      </View>
-    </Modal>
-  );
-}
-
-function PullTag({ pull, small }: { pull?: { rarity: PrRarity; new: boolean; fragments: number }; small?: boolean }) {
-  const { t } = useStore();
-  if (!pull) return null;
-  const size = small ? 11 : 14;
-  return pull.new
-    ? <Text style={{ color: colors.good, fontFamily: fonts.heavy, fontSize: size }}>✨ {t('pr.new')}</Text>
-    : <Text style={{ color: '#9FD8FF', fontFamily: fonts.bold, fontSize: size }}>+{pull.fragments} ✦</Text>;
 }
